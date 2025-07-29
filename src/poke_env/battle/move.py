@@ -489,7 +489,7 @@ class Move:
         :return: Move priority.
         :rtype: int
         """
-        return self.entry["priority"]
+        return self.entry.get('priority', 0)
 
     @property
     def pseudo_weather(self) -> Optional[str]:
