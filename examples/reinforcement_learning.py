@@ -1,9 +1,14 @@
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from typing import Any, Dict, Optional
 
 import numpy as np
 import numpy.typing as npt
 import torch
 import torch.nn as nn
+from tqdm import tqdm
 from gymnasium.spaces import Box, Discrete, Space
 from ray.rllib.algorithms import PPOConfig
 from ray.rllib.core import Columns
@@ -12,10 +17,12 @@ from ray.rllib.core.rl_module.apis.value_function_api import ValueFunctionAPI
 from ray.rllib.core.rl_module.torch import TorchRLModule
 from ray.rllib.env import ParallelPettingZooEnv
 from ray.tune.registry import register_env
+from tqdm import tqdm
 
 from poke_env.battle import AbstractBattle, Battle
 from poke_env.environment import SingleAgentWrapper, SinglesEnv
-from poke_env.player import RandomPlayer
+from poke_env.player import SimpleHeuristicsPlayer, MaxBasePowerPlayer
+
 
 
 class ExampleEnv(SinglesEnv[npt.NDArray[np.float32]]):
@@ -37,7 +44,7 @@ class ExampleEnv(SinglesEnv[npt.NDArray[np.float32]]):
     def create_multi_agent_env(cls, config: Dict[str, Any]) -> ParallelPettingZooEnv:
         env = cls(
             battle_format=config["battle_format"],
-            log_level=25,
+            log_level=50,
             open_timeout=None,
             strict=False,
         )
@@ -47,11 +54,11 @@ class ExampleEnv(SinglesEnv[npt.NDArray[np.float32]]):
     def create_single_agent_env(cls, config: Dict[str, Any]) -> SingleAgentWrapper:
         env = cls(
             battle_format=config["battle_format"],
-            log_level=25,
+            log_level=50,
             open_timeout=None,
             strict=False,
         )
-        opponent = RandomPlayer()
+        opponent = MaxBasePowerPlayer()
         return SingleAgentWrapper(env, opponent)
 
     def calc_reward(self, battle) -> float:
@@ -110,7 +117,7 @@ class ActorCriticModule(TorchRLModule, ValueFunctionAPI):
             catalog_class=catalog_class,
         )
         self.model = nn.Linear(10, 100)
-        self.actor = nn.Linear(100, 26)
+        self.actor = nn.Linear(100, 10)
         self.critic = nn.Linear(100, 1)
 
     def _forward(self, batch: Dict[str, Any], **kwargs) -> Dict[str, Any]:
@@ -126,41 +133,12 @@ class ActorCriticModule(TorchRLModule, ValueFunctionAPI):
             embeddings = self.model(batch[Columns.OBS])
         return self.critic(embeddings).squeeze(-1)
 
-
-def single_agent_train():
-    register_env("showdown", ExampleEnv.create_single_agent_env)
-    config = PPOConfig()
-    config = config.environment(
-        "showdown",
-        env_config={"battle_format": "gen9randombattle"},
-        disable_env_checking=True,
-    )
-    config = config.learners(num_learners=1)
-    config = config.rl_module(
-        rl_module_spec=RLModuleSpec(
-            module_class=ActorCriticModule,
-            observation_space=Box(
-                np.array(ExampleEnv.LOW, dtype=np.float32),
-                np.array(ExampleEnv.HIGH, dtype=np.float32),
-                dtype=np.float32,
-            ),
-            action_space=Discrete(26),
-            model_config={},
-        )
-    )
-    config = config.training(
-        gamma=0.99, lr=1e-3, train_batch_size=1024, num_epochs=10, minibatch_size=64
-    )
-    algo = config.build_algo()
-    algo.train()
-
-
 def multi_agent_train():
     register_env("showdown", ExampleEnv.create_multi_agent_env)
     config = PPOConfig()
     config = config.environment(
         "showdown",
-        env_config={"battle_format": "gen9randombattle"},
+        env_config={"battle_format": "gen5randombattle"},
         disable_env_checking=True,
     )
     config = config.learners(num_learners=1)
@@ -177,7 +155,7 @@ def multi_agent_train():
                 np.array(ExampleEnv.HIGH, dtype=np.float32),
                 dtype=np.float32,
             ),
-            action_space=Discrete(26),
+            action_space=Discrete(10),
             model_config={},
         )
     )
@@ -187,7 +165,57 @@ def multi_agent_train():
     algo = config.build_algo()
     algo.train()
 
+def single_agent_train():
+    register_env("showdown", ExampleEnv.create_single_agent_env)
+    config = PPOConfig()
+    config = config.environment(
+        "showdown",
+        env_config={"battle_format": "gen5randombattle"},
+        disable_env_checking=True,
+    )
+    config = config.learners(num_learners=1)
+    config = config.rl_module(
+        rl_module_spec=RLModuleSpec(
+            module_class=ActorCriticModule,
+            observation_space=Box(
+                np.array(ExampleEnv.LOW, dtype=np.float32),
+                np.array(ExampleEnv.HIGH, dtype=np.float32),
+                dtype=np.float32,
+            ),
+            action_space=Discrete(10),
+            model_config={},
+        )
+    )
+    config = config.training(
+        gamma=0.99, lr=1e-3, train_batch_size=1024, num_epochs=10, minibatch_size=64
+    )
+    config = config.evaluation(
+        evaluation_interval=1,       # Run evaluation every N training iterations
+        evaluation_duration=10,      # Number of episodes per evaluation run
+        evaluation_duration_unit="episodes",
+        evaluation_num_workers=1,
+        evaluation_parallel_to_training=False,  # Eval runs after training, not concurrently
+        evaluation_config={
+            "batch_mode": "complete_episodes",  # Don't truncate for evaluation
+            "explore": False,                   # Deterministic actions for eval
+        }
+    )
+    algo = config.build_algo()
+    algo.load_checkpoint("/Users/kennethlee/Documents/poke-env/models")
+    pbar = tqdm(range(25))
+    for i in pbar:
+        result = algo.train()
+        eval = result.get("evaluation", {}).get("env_runners")
+        mean = eval.get('episode_return_mean', 'N/A')
+        min_ = eval.get('episode_return_min', 'N/A')
+        max_ = eval.get('episode_return_max', 'N/A')
+        pbar.set_description(f"{i}-Eval Episode Return: mean={mean} ({min_}, {max_})")
+
+        if i % 25 == 0:
+            save_path = "/Users/kennethlee/Documents/poke-env/models"
+            checkpoint_path = algo.save(save_path)
+            print(f"Checkpoint saved at: {checkpoint_path}")
 
 if __name__ == "__main__":
     single_agent_train()
-    multi_agent_train()
+    # multi_agent_train()

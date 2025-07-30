@@ -176,20 +176,31 @@ def calculate_damage_with_base_stats(
 
 
 def estimate_matchup(mon: Pokemon, opponent: Pokemon):
-    SPEED_TIER_COEFICIENT = 0.1
-    HP_FRACTION_COEFICIENT = 0.4
-    score = max([opponent.damage_multiplier(t) for t in mon.types if t is not None])
-    score -= max(
-        [mon.damage_multiplier(t) for t in opponent.types if t is not None]
-    )
-    if mon.base_stats["spe"] > opponent.base_stats["spe"]:
-        score += SPEED_TIER_COEFICIENT
-    elif opponent.base_stats["spe"] > mon.base_stats["spe"]:
-        score -= SPEED_TIER_COEFICIENT
-
-    score += mon.current_hp_fraction * HP_FRACTION_COEFICIENT
-    score -= opponent.current_hp_fraction * HP_FRACTION_COEFICIENT
-
+    HP_FRACTION_COEFFICIENT = 0.4
+    
+    # Type effectiveness calculations
+    our_effectiveness = max([opponent.damage_multiplier(t) for t in mon.types if t is not None])
+    their_effectiveness = max([mon.damage_multiplier(t) for t in opponent.types if t is not None])
+    
+    # Speed comparison
+    our_speed = mon.base_stats["spe"]
+    their_speed = opponent.base_stats["spe"]
+    
+    if our_speed > their_speed:
+        # Faster = use our damage multiplier
+        score = our_effectiveness
+    else:
+        # Slower = only good if we resist/neutral AND can hit back
+        if their_effectiveness <= 0.5 and mon.current_hp_fraction > 0.33:  # Normal or resistant
+            score = our_effectiveness
+        elif their_effectiveness <= 1.0 and mon.current_hp_fraction > 0.5:
+            score = our_effectiveness
+        else:
+            score = -their_effectiveness  # Bad matchup (slower + taking super effective)
+    
+    # HP difference
+    score += (mon.current_hp_fraction - opponent.current_hp_fraction) * HP_FRACTION_COEFFICIENT
+    
     return score
 
 def find_best_revenge_killer(battle: AbstractBattle):
@@ -237,65 +248,123 @@ def find_best_revenge_killer(battle: AbstractBattle):
         return max(revenge_killers, key=lambda x: x[1])[0]
     
     return None
-
-def get_move_score(attacker_id, defender_id, battle, move):
-    try:
-        return calculate_damage_with_base_stats(attacker_id, defender_id, move, battle)[1]
-    except:
-        return 0
+    
+def find_best_lethal_move(battle, attacker_id, defender_id):
+    """Find the most accurate move that guarantees a KO"""
+    opp_stats = estimate_stats_from_base(battle.opponent_active_pokemon)
+    opp_hp = battle.opponent_active_pokemon.current_hp_fraction * opp_stats["hp"]
+    
+    lethal_moves = []
+    for move in battle.available_moves:
+        try:
+            min_damage, _ = calculate_damage_with_base_stats(attacker_id, defender_id, move, battle)
+            if min_damage >= opp_hp:
+                # Handle moves with True accuracy (always hit) vs numeric accuracy
+                accuracy = 100 if move.accuracy is True else (move.accuracy or 100)
+                lethal_moves.append((move, accuracy))
+        except:
+            min_damage, _ = calculate_damage_simple(battle.active_pokemon, battle.opponent_active_pokemon, move, battle)
+            if min_damage >= opp_hp:
+                # Handle moves with True accuracy (always hit) vs numeric accuracy
+                accuracy = 100 if move.accuracy is True else (move.accuracy or 100)
+                lethal_moves.append((move, accuracy))
+    
+    if lethal_moves:
+        # Return most accurate lethal move
+        return max(lethal_moves, key=lambda x: x[1])[0]
+    
+    return None
 
 class TestPlayer(Player):
     def choose_move(self, battle: AbstractBattle) -> BattleOrder:
-        # Handle forced switches (when Pokemon faints)
-        if (battle.force_switch or not battle.available_moves) and battle.available_switches:
-            best_switch = max(battle.available_switches, 
-                     key=lambda s: estimate_matchup(s, battle.opponent_active_pokemon))
-                    # First check if we have a revenge killer
-            revenge_killer = find_best_revenge_killer(battle)
-            if revenge_killer:
-                return self.create_order(revenge_killer)
+        order = self._choose_move(battle)
+        print(order)
+        return order
+    def _choose_move(self, battle: AbstractBattle) -> BattleOrder:
+        try:
+            # Handle forced switches (when Pokemon faints)
+            if (battle.force_switch or not battle.available_moves) and battle.available_switches:
+                # First check if we have a revenge killer
+                revenge_killer = find_best_revenge_killer(battle)
+                if revenge_killer:
+                    return self.create_order(revenge_killer)
+                
+                # Otherwise use matchup-based switching
+                best_switch = max(battle.available_switches, 
+                        key=lambda s: estimate_matchup(s, battle.opponent_active_pokemon))
+                return self.create_order(best_switch)
+
+            if not battle.available_moves or not battle.active_pokemon or not battle.opponent_active_pokemon:
+                return self.choose_random_move(battle)
             
-            # Otherwise use the original matchup-based switching
-            best_switch = max(battle.available_switches, 
-                    key=lambda s: estimate_matchup(s, battle.opponent_active_pokemon))
-            return self.create_order(best_switch)
-        
-        # Normal move selection logic
-        if not battle.available_moves or not battle.active_pokemon:
+            # Get identifiers for damage calculation
+            attacker_id = battle.active_pokemon.identifier("p1")
+            defender_id = battle.opponent_active_pokemon.identifier("p2")
+            def get_move_score(move):
+                try:
+                    max_damage, min_damage = calculate_damage_with_base_stats(attacker_id, defender_id, move, battle)
+                    return (max_damage + min_damage)*0.5 * move.accuracy
+                except:
+                    max_damage, min_damage = calculate_damage_simple(battle.active_pokemon, battle.opponent_active_pokemon, move, battle) 
+                    return (max_damage + min_damage)*0.5 * move.accuracy
+            
+            # Find best move and calculate damage
+            # Usage in your main logic:
+            lethal_move = find_best_lethal_move(battle, attacker_id, defender_id)
+            
+            # Check for guaranteed KO scenarios
+            our_speed = battle.active_pokemon.stats["spe"] or battle.active_pokemon.base_stats["spe"]
+            # Get opponent's current HP
+            opp_stats = estimate_stats_from_base(battle.opponent_active_pokemon)
+            opp_speed = opp_stats["spe"]
+            opp_hp = battle.opponent_active_pokemon.current_hp_fraction * opp_stats["hp"]
+            # Get type effectiveness of opponent's moves against us
+            opp_eff = max([battle.active_pokemon.damage_multiplier(t) 
+                        for t in battle.opponent_active_pokemon.types if t is not None])
+            
+            if lethal_move and our_speed > opp_speed:
+                return self.create_order(lethal_move)
+            if lethal_move and opp_eff <= 1.0:
+                return self.create_order(lethal_move)
+            
+            best_move = max(battle.available_moves, key=lambda m: get_move_score(m))
+            dmg = get_move_score(best_move)
+            
+            # Priority 1: Guaranteed KO and we're faster
+            if dmg >= opp_hp and our_speed > opp_speed:
+                return self.create_order(best_move)
+            
+            # Priority 2: Guaranteed KO and opponent isn't super effective against us
+            if dmg >= opp_hp and opp_eff <= 1.0:
+                return self.create_order(best_move)
+            
+            # Priority 3: Guaranteed 2HKO and we're faster
+            if dmg * 2.0 >= opp_hp and opp_eff <= 1.0:
+                return self.create_order(best_move)
+            
+            opp_pokemons = [mon for mon in battle.opponent_team.values() if not mon.fainted]
+            if len(opp_pokemons) == 1:
+                self.create_order(best_move)
+
+            # If no switches available, have to use the move
+            if not battle.available_switches:
+                return self.create_order(best_move)
+            
+            # Evaluate switching options
+            best_switch = max(battle.available_switches,
+                            key=lambda s: estimate_matchup(s, battle.opponent_active_pokemon))
+            
+            current_matchup = estimate_matchup(battle.active_pokemon, battle.opponent_active_pokemon)
+            switch_matchup = estimate_matchup(best_switch, battle.opponent_active_pokemon)
+            
+            # Priority 5: Bad matchup and switch gives good matchup
+            if opp_eff >= 2.0 and our_speed < opp_speed:
+                return self.create_order(best_switch)
+            # Priority 6: Very low damage output and switch gives good matchup
+            if dmg * 3 < opp_hp and current_matchup < switch_matchup and switch_matchup > 1 and current_matchup <= -1:
+                return self.create_order(best_switch)
+            
+            # Default: use the best move
+            return self.create_order(best_move)
+        except:
             return self.choose_random_move(battle)
-        
-        attacker_id = battle.active_pokemon.identifier("p1")
-        defender_id = battle.opponent_active_pokemon.identifier("p2")
-        
-        best_move = max(battle.available_moves, key=lambda m : get_move_score(attacker_id, defender_id, battle, m))
-        min_damage, max_damage = calculate_damage_with_base_stats(attacker_id, defender_id, best_move, battle)
-        opp_stats = estimate_stats_from_base(battle.opponent_active_pokemon)
-        opp_hp = battle.opponent_active_pokemon.current_hp_fraction * opp_stats["hp"]
-        if min_damage >= opp_hp and battle.active_pokemon.stats["spe"] > opp_stats["spe"]:
-            # Guaranteed KO - use the move
-            return self.create_order(best_move)
-        opp_eff = max([battle.active_pokemon.damage_multiplier(t) 
-        for t in battle.opponent_active_pokemon.types if t is not None])
-        if min_damage >= opp_hp and opp_eff <= 1:
-            return self.create_order(best_move)
-        if min_damage * 2 >= opp_hp and battle.active_pokemon.stats["spe"] > opp_stats["spe"]:
-            return self.create_order(best_move)
-        if min_damage * 2 >= opp_hp and opp_eff <= 1:
-            return self.create_order(best_move)
-        if not battle.available_switches:
-            return self.create_order(best_move)
-        
-        best_switch = max(battle.available_switches, 
-            key=lambda s: estimate_matchup(s, battle.opponent_active_pokemon))
-        if (estimate_matchup(battle.active_pokemon, battle.opponent_active_pokemon) <= -1.0 and
-            estimate_matchup(best_switch,battle.opponent_active_pokemon) >= 1.0):
-            return self.create_order(best_switch)
-        if (min_damage * 4 < opp_hp and estimate_matchup(best_switch,battle.opponent_active_pokemon) >= 1.0):
-            return self.create_order(best_switch)
-        if (random.random() < 0.15 and 
-            estimate_matchup(battle.active_pokemon, battle.opponent_active_pokemon) < 
-            estimate_matchup(best_switch,battle.opponent_active_pokemon) and 
-            estimate_matchup(best_switch,battle.opponent_active_pokemon) > 0
-            ):
-            return self.create_order(best_switch)
-        return self.create_order(best_move)
