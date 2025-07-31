@@ -110,13 +110,14 @@ class ExampleEnv(SinglesEnv[npt.NDArray[np.float32]]):
                 action_mask[action] = 1
             except ValueError as e:
                 battle.logger.warning(f"{str(e)} - in {str(order)}")
-        for switch in battle.available_switches:
-            try:
-                order = Player.create_order(switch)
-                action = self.order_to_action(order, battle)
-                action_mask[action] = 1
-            except ValueError as e:
-                battle.logger.warning(f"{str(e)} - in {str(order)}")
+        if not battle.trapped:
+            for switch in battle.available_switches:
+                try:
+                    order = Player.create_order(switch)
+                    action = self.order_to_action(order, battle)
+                    action_mask[action] = 1
+                except ValueError as e:
+                    battle.logger.warning(f"{str(e)} - in {str(order)}")
         obs = np.float32(final_vector)
         return {
             "observations": obs,
