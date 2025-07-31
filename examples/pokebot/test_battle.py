@@ -29,13 +29,13 @@ async def main():
         account_configuration=AccountConfiguration("RLBot", None),
         battle_format="gen5randombattle"
     )
-    # second_player = MaxBasePowerPlayer(battle_format="gen5randombattle")
-    # await test_player.battle_against(second_player, n_battles=10)
-    # for battle_id, battle in test_player._battles.items():
-    #     print(f"Battle ID: {battle_id} - {('L' if battle.lost else 'W')} ")
-    # print(f"W:{test_player.n_won_battles} L:{test_player.n_lost_battles} T:{test_player.n_tied_battles} Total: {test_player.n_finished_battles}")
+    second_player = MaxBasePowerPlayer(battle_format="gen5randombattle")
+    await test_player.battle_against(second_player, n_battles=1)
+    for battle_id, battle in test_player._battles.items():
+        print(f"Battle ID: {battle_id} - {('L' if battle.lost else 'W')} ")
+    print(f"W:{test_player.n_won_battles} L:{test_player.n_lost_battles} T:{test_player.n_tied_battles} Total: {test_player.n_finished_battles}")
 
-    game = await test_player.ladder(1)
+    # game = await test_player.ladder(1)
 
 if __name__ == "__main__":
     try:

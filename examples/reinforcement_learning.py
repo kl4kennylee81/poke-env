@@ -1,7 +1,3 @@
-import sys
-import os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from typing import Any, Dict, Optional
 
 import numpy as np
@@ -9,7 +5,7 @@ import numpy.typing as npt
 import torch
 import torch.nn as nn
 from tqdm import tqdm
-from gymnasium.spaces import Box, Discrete, Space
+from gymnasium.spaces import Dict as DictSpace, Box, Discrete, Space
 from ray.rllib.algorithms import PPOConfig
 from ray.rllib.core import Columns
 from ray.rllib.core.rl_module import RLModuleSpec
@@ -20,6 +16,7 @@ from ray.tune.registry import register_env
 from tqdm import tqdm
 
 from poke_env.battle import AbstractBattle, Battle
+from poke_env import Player
 from poke_env.environment import SingleAgentWrapper, SinglesEnv
 from poke_env.player import SimpleHeuristicsPlayer, MaxBasePowerPlayer
 
@@ -32,13 +29,21 @@ class ExampleEnv(SinglesEnv[npt.NDArray[np.float32]]):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.observation_spaces = {
-            agent: Box(
-                np.array(self.LOW, dtype=np.float32),
-                np.array(self.HIGH, dtype=np.float32),
-                dtype=np.float32,
-            )
+            agent: DictSpace({
+                "observations": Box(
+                    low=np.array([-1, -1, -1, -1, 0, 0, 0, 0, 0, 0], dtype=np.float32),
+                    high=np.array([3, 3, 3, 3, 4, 4, 4, 4, 1, 1], dtype=np.float32),
+                    dtype=np.float32,
+                ),
+                "action_mask": Box(
+                    low=np.zeros(10, dtype=np.float32),
+                    high=np.ones(10, dtype=np.float32),
+                    dtype=np.float32,
+                )
+            })
             for agent in self.possible_agents
         }
+
 
     @classmethod
     def create_multi_agent_env(cls, config: Dict[str, Any]) -> ParallelPettingZooEnv:
@@ -54,7 +59,7 @@ class ExampleEnv(SinglesEnv[npt.NDArray[np.float32]]):
     def create_single_agent_env(cls, config: Dict[str, Any]) -> SingleAgentWrapper:
         env = cls(
             battle_format=config["battle_format"],
-            log_level=50,
+            log_level=25,
             open_timeout=None,
             strict=False,
         )
@@ -97,13 +102,32 @@ class ExampleEnv(SinglesEnv[npt.NDArray[np.float32]]):
                 [fainted_mon_team, fainted_mon_opponent],
             ]
         )
-        return np.float32(final_vector)
+        action_mask = np.zeros(10)
+        for move in battle.available_moves:
+            try:
+                order = Player.create_order(move)
+                action = self.order_to_action(order, battle)
+                action_mask[action] = 1
+            except ValueError as e:
+                battle.logger.warning(f"{str(e)} - in {str(order)}")
+        for switch in battle.available_switches:
+            try:
+                order = Player.create_order(switch)
+                action = self.order_to_action(order, battle)
+                action_mask[action] = 1
+            except ValueError as e:
+                battle.logger.warning(f"{str(e)} - in {str(order)}")
+        obs = np.float32(final_vector)
+        return {
+            "observations": obs,
+            "action_mask": action_mask
+        }
 
 
 class ActorCriticModule(TorchRLModule, ValueFunctionAPI):
     def __init__(
         self,
-        observation_space: Space,
+        observation_space: DictSpace,
         action_space: Space,
         inference_only: bool,
         model_config: Dict[str, Any],
@@ -121,16 +145,18 @@ class ActorCriticModule(TorchRLModule, ValueFunctionAPI):
         self.critic = nn.Linear(100, 1)
 
     def _forward(self, batch: Dict[str, Any], **kwargs) -> Dict[str, Any]:
-        obs = batch[Columns.OBS]
+        obs = batch[Columns.OBS]["observations"]
+        mask = batch[Columns.OBS]["action_mask"]
         embeddings = self.model(obs)
         logits = self.actor(embeddings)
-        return {Columns.EMBEDDINGS: embeddings, Columns.ACTION_DIST_INPUTS: logits}
+        masked_logits = torch.where(mask.bool(), logits, -1e8)
+        return {Columns.EMBEDDINGS: embeddings, Columns.ACTION_DIST_INPUTS: masked_logits}
 
     def compute_values(
         self, batch: Dict[str, Any], embeddings: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
         if embeddings is None:
-            embeddings = self.model(batch[Columns.OBS])
+            embeddings = self.model(batch[Columns.OBS]["observations"])
         return self.critic(embeddings).squeeze(-1)
 
 def multi_agent_train():
@@ -202,7 +228,7 @@ def single_agent_train():
     )
     algo = config.build_algo()
     algo.load_checkpoint("/Users/kennethlee/Documents/poke-env/models")
-    pbar = tqdm(range(25))
+    pbar = tqdm(range(5))
     for i in pbar:
         result = algo.train()
         eval = result.get("evaluation", {}).get("env_runners")
@@ -214,7 +240,6 @@ def single_agent_train():
         if i % 25 == 0:
             save_path = "/Users/kennethlee/Documents/poke-env/models"
             checkpoint_path = algo.save(save_path)
-            print(f"Checkpoint saved at: {checkpoint_path}")
 
 if __name__ == "__main__":
     single_agent_train()
