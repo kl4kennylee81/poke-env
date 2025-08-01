@@ -26,9 +26,9 @@ async def main():
     
     # Create two random bot instances - simple as shown in the official docs
     test_player = RLPlayer(
-        checkpoint="/Users/kennethlee/Documents/poke-env/models/learner_group/learner/rl_module",
-        account_configuration=AccountConfiguration("RLBot", None),
-        battle_format="gen5randombattle"
+    "/Users/kennethlee/Documents/poke-env/artifacts/pokemon-rl-model-prenorm:v61/model_checkpoint_1000/learner_group/learner/rl_module",
+    account_configuration=AccountConfiguration("RLBot", None),
+    battle_format="gen5randombattle"
     )
     second_player = MaxBasePowerPlayer(battle_format="gen5randombattle")
     await test_player.battle_against(second_player, n_battles=1)
@@ -39,6 +39,4 @@ async def main():
     # game = await test_player.ladder(1)
 
 if __name__ == "__main__":
-    run = wandb.init()
-    artifact = run.use_artifact('kl4kennylee81-kenneth-personal/pokemon-rl/pokemon-rl-model-prenorm:v61', type='model')
-    artifact_dir = artifact.download()
+    asyncio.run(main())
