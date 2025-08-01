@@ -9,12 +9,12 @@ from ray.rllib.core.rl_module import RLModule, MultiRLModule
 from ray.tune.registry import register_env
 
 from poke_env.battle import AbstractBattle
-from examples.reinforcement_learning import ExampleEnv
+from examples.reinforcement_learning import EnhancedPokemonEnv
 
 class RLPlayer(Player):
     def __init__(self, checkpoint="", agent_id=None, **kwargs):
         super().__init__(**kwargs)
-        register_env("showdown", ExampleEnv.create_single_agent_env)
+        register_env("showdown", EnhancedPokemonEnv.create_single_agent_env)
         
         self.multi_rl_module = RLModule.from_checkpoint(checkpoint)
         
@@ -41,7 +41,7 @@ class RLPlayer(Player):
 
     def choose_move(self, battle: AbstractBattle) -> BattleOrder:
         try:
-            env = ExampleEnv()
+            env = EnhancedPokemonEnv()
             obs = env.embed_battle(battle)
             obs["observations"] = torch.tensor(obs["observations"], dtype=torch.float32).unsqueeze(0)
             obs["action_mask"] = torch.tensor(obs["action_mask"], dtype=torch.bool).unsqueeze(0)

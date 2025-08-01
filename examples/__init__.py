@@ -1,3 +1,3 @@
-from .reinforcement_learning import ExampleEnv, ActorCriticModule
+from .reinforcement_learning import EnhancedPokemonEnv, EnhancedActorCriticModule
 
-__all__ = ['ExampleEnv', 'ActorCriticModule']
+__all__ = ['EnhancedPokemonEnv', 'EnhancedActorCriticModule']

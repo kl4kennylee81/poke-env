@@ -19,6 +19,7 @@ from poke_env import RandomPlayer, MaxBasePowerPlayer, SimpleHeuristicsPlayer
 from tabulate import tabulate
 from pokebot.test_player import TestPlayer
 from pokebot.rl_bot import RLPlayer
+import wandb
     
 async def main():
     """Main function to run random bot battles"""
@@ -38,7 +39,6 @@ async def main():
     # game = await test_player.ladder(1)
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("\nExiting...")
+    run = wandb.init()
+    artifact = run.use_artifact('kl4kennylee81-kenneth-personal/pokemon-rl/pokemon-rl-model-prenorm:v61', type='model')
+    artifact_dir = artifact.download()

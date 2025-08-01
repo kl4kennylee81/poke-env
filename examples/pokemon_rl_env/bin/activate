@@ -68,6 +68,8 @@ export PYTHONPATH="src:examples:examples/src"
 VIRTUAL_ENV_PROMPT='(pokemon_rl_env) '
 export VIRTUAL_ENV_PROMPT
 
+export WANDB_API_KEY='5a989f79c309791f760ec938cf9c784c2a07d209'
+
 # unset PYTHONHOME if set
 # this will fail if PYTHONHOME is set to the empty string (which is bad anyway)
 # could use `if (set -u; : $PYTHONHOME) ;` in bash

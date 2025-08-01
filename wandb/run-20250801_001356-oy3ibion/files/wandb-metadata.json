@@ -1,0 +1,26 @@
+{
+  "os":  "macOS-12.7.6-x86_64-i386-64bit",
+  "python":  "CPython 3.12.11",
+  "startedAt":  "2025-08-01T04:13:56.393746Z",
+  "program":  "-m examples.pokebot.test_battle",
+  "git":  {
+    "remote":  "https://github.com/kl4kennylee81/poke-env.git",
+    "commit":  "649c318d2282a0b9721bb080756506baa219d9b0"
+  },
+  "email":  "kl4kennylee81@gmail.com",
+  "root":  "/Users/kennethlee/Documents/poke-env",
+  "host":  "Kenneths-MBP",
+  "executable":  "/Users/kennethlee/Documents/poke-env/examples/pokemon_rl_env/bin/python",
+  "cpu_count":  2,
+  "cpu_count_logical":  4,
+  "disk":  {
+    "/":  {
+      "total":  "121123069952",
+      "used":  "89262460928"
+    }
+  },
+  "memory":  {
+    "total":  "8589934592"
+  },
+  "writerId":  "5suls4bdwcio90kx91dimqjzv5j1tirg"
+}
