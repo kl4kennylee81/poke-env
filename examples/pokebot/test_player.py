@@ -278,7 +278,6 @@ def find_best_lethal_move(battle, attacker_id, defender_id):
 class TestPlayer(Player):
     def choose_move(self, battle: AbstractBattle) -> BattleOrder:
         order = self._choose_move(battle)
-        print(order)
         return order
     def _choose_move(self, battle: AbstractBattle) -> BattleOrder:
         try:

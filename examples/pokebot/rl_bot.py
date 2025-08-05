@@ -38,10 +38,10 @@ def load_model_from_checkpoint(pth_path, observation_space, action_space, model_
     return model
 
 class RLPlayer(Player):
-  def __init__(self, **kwargs):
+  def __init__(self, pth_path, **kwargs):
     super().__init__(**kwargs)
     self.model = load_model_from_checkpoint(
-      pth_path="pokemon_rl_model.pth",
+      pth_path=pth_path,
       observation_space=DictSpace({
           "observations": Box(
               low=np.array(EnhancedPokemonEnv.LOW, dtype=np.float32),
