@@ -27,7 +27,7 @@ from poke_env.player import SimpleHeuristicsPlayer, MaxBasePowerPlayer
 import os
 
 class EnhancedPokemonEnv(SinglesEnv[npt.NDArray[np.float32]]):
-    # Extended state space: 25 features - ALL NORMALIZED
+    # Extended state space: 31 features - ALL NORMALIZED
     # Features breakdown:
     # [0-3]  moves_base_power(4):           [-1, 3] (-1=unavailable, 0.4-2.0=normalized power)
     # [4-7]  moves_dmg_multiplier(4):       [0, 4] (type effectiveness: 0=no effect, 4=4x damage)
@@ -47,7 +47,9 @@ class EnhancedPokemonEnv(SinglesEnv[npt.NDArray[np.float32]]):
            0,                 # available_switches: 0 minimum
            0,                 # opp_threat: 0 minimum
            0, 0, 0, 0, 0,     # switch_hp_ratios: 0 minimum
-           -1, -1, -1, -1, -1] # switch_type_effectiveness: -1 for very bad matchup
+           -1, -1, -1, -1, -1, # switch_type_effectiveness: -1 for very bad matchup
+           0, 0, 0, 0, 0, 0
+           ] 
 
     HIGH = [3, 3, 3, 3,       # moves_base_power: 3.0 for very high power moves (300 base power)
             4, 4, 4, 4,       # moves_dmg_multiplier: 4 for 4x effectiveness
@@ -57,7 +59,8 @@ class EnhancedPokemonEnv(SinglesEnv[npt.NDArray[np.float32]]):
             1,                # available_switches: 1 maximum (all 5 available)
             1,                # opp_threat: 1 maximum (4x threat normalized)
             1, 1, 1, 1, 1,    # switch_hp_ratios: 1 maximum (full HP)
-            1, 1, 1, 1, 1]    # switch_type_effectiveness: 1 for very good matchup
+            1, 1, 1, 1, 1,
+            6,6,6,6,6,6]    # switch_type_effectiveness: 1 for very good matchup
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -81,11 +84,11 @@ class EnhancedPokemonEnv(SinglesEnv[npt.NDArray[np.float32]]):
     def create_single_agent_env(cls, config: Dict[str, Any]) -> SingleAgentWrapper:
         env = cls(
             battle_format=config["battle_format"],
-            log_level=25,
+            log_level=30,
             open_timeout=None,
             strict=False,
         )
-        opponent = SimpleHeuristicsPlayer()
+        opponent = MaxBasePowerPlayer()
         return SingleAgentWrapper(env, opponent)
 
     def calc_reward(self, battle) -> float:
@@ -109,6 +112,10 @@ class EnhancedPokemonEnv(SinglesEnv[npt.NDArray[np.float32]]):
                     battle.opponent_active_pokemon.type_2,
                     type_chart=battle.opponent_active_pokemon._data.type_chart,
                 )
+
+
+        stat_keys = ["hp", "atk", "def", "spa", "spd", "spe"]
+        active_stats = np.array([(battle.active_pokemon.stats.get(key, 0) / 100) for key in stat_keys] if battle.active_pokemon else [0] * 6)
 
         fainted_mon_team = len([mon for mon in battle.team.values() if mon.fainted]) / 6
         fainted_mon_opponent = len([mon for mon in battle.opponent_team.values() if mon.fainted]) / 6
@@ -152,7 +159,7 @@ class EnhancedPokemonEnv(SinglesEnv[npt.NDArray[np.float32]]):
                 their_effectiveness = max([switch_pokemon.damage_multiplier(t) for t in battle.opponent_active_pokemon.types if t is not None], default=0.0)
                 switch_type_effectiveness[i] = (min(our_effectiveness, 4.0) - min(their_effectiveness, 4.0)) / 4.0  # Normalize 0-4 to 0-1
 
-        # Combine all features (ALL NORMALIZED) - Total: 25 features
+        # Combine all features (ALL NORMALIZED) - Total: 31 features
         final_vector = np.concatenate([
             moves_base_power,           # 4 features: [-1, 3] (-1=unavailable, [0,300]=normalized power)
             moves_dmg_multiplier,       # 4 features: [0, 4] (type effectiveness multipliers [0x,.25x,0.5x,1,2x,4x])
@@ -161,6 +168,7 @@ class EnhancedPokemonEnv(SinglesEnv[npt.NDArray[np.float32]]):
             [speed_advantage, available_switches_count, opp_threat_level],  # 3 features: [-1,1], [0,1], [0,1]
             switch_hp_ratios,           # 5 features: [0,1] (HP ratios of available switches)
             switch_type_effectiveness,  # 5 features: [0,1] (type effectiveness vs opponent)
+            active_stats,
         ])
 
         action_mask = np.zeros(10)
@@ -203,7 +211,7 @@ class EnhancedActorCriticModule(TorchRLModule, ValueFunctionAPI):
             catalog_class=catalog_class,
         )
         self.model = nn.Sequential(
-            nn.Linear(25, 256),
+            nn.Linear(31, 256),
             nn.ReLU(),
             nn.Dropout(0.1),
 
@@ -276,9 +284,9 @@ def train_enhanced_pokemon_gpu(n_episodes, wandb_project="pokemon-rl", experimen
         name=experiment_name,
         config={
             "n_episodes": n_episodes,
-            "state_features": 25,
+            "state_features": 31,
             "network_params": "~60k",
-            "architecture": "25->256->128->64->32->16->10",
+            "architecture": "31->256->128->64->32->16->10",
             "opponent": "MaxBasePowerPlayer",
             "battle_format": "gen5randombattle",
             "lr": 1e-4,
@@ -410,8 +418,8 @@ def train_enhanced_pokemon_gpu(n_episodes, wandb_project="pokemon-rl", experimen
                         "reward_smoothed": reward_smoothed,
                         "n_episodes": n_episodes,
                         "cur_episode": iteration,
-                        "state_features": 25,
-                        "architecture": "25->256->128->64->32->10",
+                        "state_features": 31,
+                        "architecture": "31->256->128->64->32->10",
                         "opponent": "MaxBasePowerPlayer",
                         "battle_format": "gen5randombattle"
                     }
@@ -472,14 +480,14 @@ def train_enhanced_pokemon_gpu(n_episodes, wandb_project="pokemon-rl", experimen
             name=f"pokemon-rl-model-{experiment_name}",
             type="model",
             description=f"Trained Pokemon RL model after {n_episodes} episodes. "
-                       f"Final reward: {final_reward:.2f}, Architecture: 25->256->128->64->32->10",
+                       f"Final reward: {final_reward:.2f}, Architecture: 31->256->128->64->32->10",
             metadata={
                 "final_reward": final_reward,
                 "final_reward_smoothed": final_reward_smoothed,
                 "n_episodes": n_episodes,
                 "cur_episode": n_episodes,
-                "state_features": 25,
-                "architecture": "25->256->128->64->32->10",
+                "state_features": 31,
+                "architecture": "31->256->128->64->32->10",
                 "opponent": "MaxBasePowerPlayer",
                 "battle_format": "gen5randombattle"
             }
@@ -498,3 +506,12 @@ def train_enhanced_pokemon_gpu(n_episodes, wandb_project="pokemon-rl", experimen
     wandb.finish()
 
     return algo, results
+
+
+if __name__ == "__main__":
+    ray.init(
+        num_gpus=0,
+        num_cpus=1,
+        ignore_reinit_error=True
+    )
+    algo, results = train_enhanced_pokemon_gpu(100, wandb_project="pokemon-rl", experiment_name="local-test")
